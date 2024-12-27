@@ -1,95 +1,72 @@
 package priv.light.baidu;
 
-import lombok.extern.slf4j.Slf4j;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Data;
+import org.apache.hc.client5.http.classic.methods.CloseableHttpClient;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.HttpStatus;
+import org.apache.hc.core5.http.NoHttpResponseException;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.http.HttpHost;
 
-import java.io.File;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 
-/**
- * <p>
- * ------使用提示
- * 使用前需要自行准备代理, 接入代理后, 提供百度网盘的分享链接运行即可.
- * 此处使用 携趣 代理, 其他代理需要按代理商的API进行配置.
- * password.txt: 提取码字典, 当password.txt不存在时会自动生成.
- * passwordHasTest.txt: 已经测试过的错误提取码记录在此, 每次运行会自动去除已经测试过的提取码.正确的提取码亦保存在此文件中, 形如:
- * "https://pan.baidu.com/s/1XXX 的提取码: YYYY"
- * ------
- * </p>
- *
- * <p>
- * ------程序运行入口
- * priv.light.baidu.BaiDuPanFetchCrack#main(java.lang.String[])
- * 日志存储在项目的 logs 文件夹下
- * ------
- * </p>
- *
- * <p>
- * ------破解花费时间
- * 取决于代理的网络质量和线程数量, 与线程数量正相关, CPU核心数量越多, 破解花费就越少.
- * 提取码字典长度 => 36 * 36 * 36 * 36 = 1,679,616个
- * 测试线程数量 => 10个
- * 每秒测试数量 => 28个
- * 测试最长预计 => 16个小时
- * ------
- * </p>
- *
- * <p>
- * ------停止程序注意事项
- * 若手动停止程序, 则必须等待程序执行完关闭前的动作, 以保存已经测试过的提取码到passwordHasTest.txt
- * ------
- * </p>
- *
- * @author Light
- * @date 2022/3/25 21:21
- */
 
-@Slf4j
-public class BaiDuPanFetchCrack {
+@Data
+public class ProxyResponseHandler implements HttpClientResponseHandler<HttpHost> {
 
-    public static void main(String[] args) throws IOException, URISyntaxException {
-        System.setProperty("log4j2.AsyncQueueFullPolicy", "Synchronous");
+    private static final String SUCCESS = "success";
 
-        // 百度网盘的分享链接 形如 https://pan.baidu.com/s/1XXX
-        URI panUri = new URI("https://pan.baidu.com/s/1wZqE6mQDmqnIVtAF5dMdKQ");
+    private CloseableHttpClient proxyClient;
+    private StringBuilder addWhiteList;
+    private HttpGet clearWhiteList;
+    private HttpGet ip;
 
-        File passwordFile = new File("password.txt");
-        File hasTestPasswordFile = new File("passwordHasTest.txt");
-
-        // 获取代理IP地址和端口的代理商的URL
-        // 百度网盘限制1个IP和端口无验证码请求只能达4次, 多于4次需要验证码, 因此需要使用代理
-        HttpGet proxy = new HttpGet("http://api.xiequ.cn/VAD/GetIp.aspx?act=getturn51&uid=56669&vkey=CD49B0BABC5D0692AF75B0A3FC47CDAD&num=1&time=6&plat=0&re=0&type=7&so=1&group=51&ow=1&spl=1&addr=&db=1");
-        HttpGet clearWhiteList = new HttpGet("http://op.xiequ.cn/IpWhiteList.aspx?uid=56669&ukey=524F8242625394E2851494D7D68D5A84&act=del&ip=all");
-        StringBuilder addWhiteList = new StringBuilder("http://op.xiequ.cn/IpWhiteList.aspx?uid=56669&ukey=524F8242625394E2851494D7D68D5A84&act=add&ip=");
-        HttpGet ip = new HttpGet("http://api.xiequ.cn/VAD/OnlyIp.aspx?yyy=123");
-
-        // 是否排除测试 0000 1111 2222 ... zzzz 等提取码, 仅当不存在password.txt时生效
-        boolean distinct = true;
-
-        // 是否每次请求测试前对百度网盘分享链接进行验证, 即检查是否取消分享; 关闭此检查可以极大提升速度
-        boolean validateShare = false;
-        int corePoolSize = Runtime.getRuntime().availableProcessors() + 1;
-        CrackPasswordPool pool = new CrackPasswordPool(validateShare, corePoolSize, passwordFile, hasTestPasswordFile, distinct);
-
-        HttpUtil httpUtil = new HttpUtil(panUri, proxy, pool);
-        ProxyResponseHandler proxyResponseHandler = httpUtil.getProxyResponseHandler();
-        proxyResponseHandler.setAddWhiteList(addWhiteList);
-        proxyResponseHandler.setClearWhiteList(clearWhiteList);
-        proxyResponseHandler.setIp(ip);
-
-        pool.setHttpUtil(httpUtil);
-
-        Runtime.getRuntime().addShutdownHook(new ManualExitShutDownHook(pool));
-
-        while (true) {
-            if (!pool.execute()) {
-                break;
-            }
+    @Override
+    public HttpHost handleResponse(CloseableHttpResponse response) throws IOException, ParseException {
+        if (this.proxyClient == null || this.addWhiteList == null || this.clearWhiteList == null || this.ip == null) {
+            throw new NoHttpResponseException("HttpProxyClient or WhiteList or Ip HttpGet is null.");
         }
 
-        pool.waitForComplete();
+        String bodyText = this.entity2String(response);
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode ipAndPort = objectMapper.readTree(bodyText);
+        JsonNode data = ipAndPort.path("data").path(0);
+        String ip = data.path("IP").asText();
+        int port = data.path("Port").asInt();
+        if (ip.isEmpty()) {
+            CloseableHttpResponse ipResponse = this.proxyClient.execute(this.ip);
+            if (ipResponse.getCode()!= HttpStatus.SC_OK) {
+                return null;
+            }
+
+            String localIp = this.entity2String(ipResponse);
+            HttpGet addGet = new HttpGet(this.addWhiteList.append(localIp).toString());
+            do {
+                ipResponse = this.proxyClient.execute(this.clearWhiteList);
+                bodyText = this.entity2String(ipResponse);
+            } while (!SUCCESS.equals(bodyText));
+
+            do {
+                ipResponse = this.proxyClient.execute(addGet);
+                bodyText = this.entity2String(ipResponse);
+            } while (!SUCCESS.equals(bodyText));
+
+            return null;
+        }
+
+        return new HttpHost(ip, port);
     }
 
+    private String entity2String(CloseableHttpResponse response) throws IOException, ParseException {
+        HttpEntity entity = response.getEntity();
+        String bodyText = EntityUtils.toString(entity, StandardCharsets.UTF_8);
+        EntityUtils.consume(entity);
+
+        return bodyText;
+    }
 }

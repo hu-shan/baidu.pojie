@@ -97,7 +97,7 @@ public class CrackPasswordPool {
     }
 
     public boolean shouldContinue() {
-        return !this.passwords.isEmpty() && !this.httpUtil.getHasDispose().get() && !(this.threadPool.isShutdown() || this.threadPool.isTerminating() || this.threadPool.isTerminated());
+        return!this.passwords.isEmpty() &&!this.httpUtil.getHasDispose().get() &&!(this.threadPool.isShutdown() || this.threadPool.isTerminating() || this.threadPool.isTerminated());
     }
 
     public void waitForComplete() {

@@ -14,6 +14,7 @@ import org.apache.hc.core5.util.TimeValue;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * @author Light
@@ -53,9 +54,9 @@ public class RetryStrategy extends DefaultHttpRequestRetryStrategy {
             String password = parameters.get(0).getValue();
 
             int code = response.getCode();
-            if (code != HttpStatus.SC_NOT_FOUND && code != HttpStatus.SC_PROXY_AUTHENTICATION_REQUIRED) {
+            if (code!= HttpStatus.SC_NOT_FOUND && code!= HttpStatus.SC_PROXY_AUTHENTICATION_REQUIRED) {
                 HttpEntity body = ((ClassicHttpResponse) response).getEntity();
-                if (body.getContentType().contains(JSON)) {
+                if (Objects.nonNull(body) && body.getContentType().contains(JSON)) {
                     String bodyText = EntityUtils.toString(body, StandardCharsets.UTF_8);
                     EntityUtils.consume(body);
 
